@@ -80,6 +80,7 @@ def init_wandb(cfg):
         kwargs["resume"] = "must"
     else:
         kwargs["id"] = wandb.util.generate_id()
+    kwargs['mode'] = 'offline'
     run = wandb.init(**kwargs)
     cfg_dict = dict_flatten(OmegaConf.to_container(cfg))
     run.config.update(cfg_dict)

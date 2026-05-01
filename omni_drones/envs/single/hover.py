@@ -25,11 +25,15 @@ import torch
 import torch.distributions as D
 
 import omni.isaac.core.utils.prims as prim_utils
+#import omni.isaac.core.utils.math as quat_utils
+from pxr import UsdGeom, Gf, Sdf
 
 from omni_drones.envs.isaac_env import AgentSpec, IsaacEnv
 from omni_drones.robots.drone import MultirotorBase
 from omni_drones.views import ArticulationView, RigidPrimView
 from omni_drones.utils.torch import euler_to_quaternion, quat_axis
+from scipy.spatial.transform import Rotation as R
+from omni.isaac.core.utils.rotations import euler_angles_to_quat
 
 from tensordict.tensordict import TensorDict, TensorDictBase
 from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, DiscreteTensorSpec
@@ -140,44 +144,143 @@ class Hover(IsaacEnv):
             )
             self.payload.initialize()
 
-        self.target_vis = ArticulationView(
+        """self.target_vis = ArticulationView(
             "/World/envs/env_*/target",
             reset_xform_properties=False
         )
-        self.target_vis.initialize()
+        self.target_vis.initialize()"""
         self.init_poses = self.drone.get_world_poses(clone=True)
         self.init_vels = torch.zeros_like(self.drone.get_velocities())
 
         self.init_pos_dist = D.Uniform(
-            torch.tensor([-2.5, -2.5, 1.], device=self.device),
-            torch.tensor([2.5, 2.5, 2.5], device=self.device)
+            torch.tensor([-8, -5, 1.], device=self.device),
+            torch.tensor([-5, 5, 2.5], device=self.device)
         )
         self.init_rpy_dist = D.Uniform(
-            torch.tensor([-.2, -.2, 0.], device=self.device) * torch.pi,
-            torch.tensor([0.2, 0.2, 2.], device=self.device) * torch.pi
+            torch.tensor([-.05, -.05, 0.], device=self.device) * torch.pi,
+            torch.tensor([0.05,  0.05, 2.], device=self.device) * torch.pi
         )
-        self.target_rpy_dist = D.Uniform(
+        """self.target_rpy_dist = D.Uniform(
             torch.tensor([0., 0., 0.], device=self.device) * torch.pi,
             torch.tensor([0., 0., 2.], device=self.device) * torch.pi
-        )
+        )"""
 
-        self.target_pos = torch.tensor([[0.0, 0.0, 2.]], device=self.device)
+        self.target_pos = torch.tensor([[12, 0.0, 2.]], device=self.device)
         self.target_heading = torch.zeros(self.num_envs, 1, 3, device=self.device)
         self.alpha = 0.8
 
     def _design_scene(self):
+
+        import numpy as np
+        from omni.isaac.sensor import Camera
+        import omni.kit.commands
+        from omni.isaac.core.utils.rotations import euler_angles_to_quat
+        import omni.usd 
+        from pxr import UsdPhysics, UsdShade 
         import omni_drones.utils.kit as kit_utils
         import omni.isaac.core.utils.prims as prim_utils
+
+        
+
+
+        stage = omni.usd.get_context().get_stage()
+
+        camera_path = "/World/envs/env_0/ground_station_camera"
+
+        radar_path = "/World/envs/env_0/ground_station_radar"
+
+        gs_position = np.array([14.0, -8.0, 1.0]) 
+        gs_rotation = np.array([97.0, -2.0, 49.0])
+
+        self.camera = Camera(
+            prim_path=camera_path,
+            resolution=(1280, 720),
+            translation=np.array([14.0, -8.0, 1.0]),
+        )
+        self.camera.initialize()
+
+        omni.kit.commands.execute(
+            "IsaacSensorCreateRtxRadar",
+            path=radar_path
+        )
+
+
+        camera_prim = stage.GetPrimAtPath(camera_path)
+
+        xform = UsdGeom.Xformable(camera_prim)
+        xform.ClearXformOpOrder()
+        xform.AddTranslateOp().Set(Gf.Vec3d(14.0, -8.0, 1.0))  
+        xform.AddRotateXYZOp().Set(Gf.Vec3f(97.0, -2.0, 49.0))
+        
+
+        camera_prim = self.camera.prim
+        camera_prim.GetAttribute("focalLength").Set(24.0)
+        camera_prim.GetAttribute("horizontalAperture").Set(40.0)
+        camera_prim.GetAttribute("horizontalApertureOffset").Set(0.0)
+
+        stage = omni.usd.get_context().get_stage()
+        radar_prim = stage.GetPrimAtPath(radar_path)
+        xform = UsdGeom.Xformable(radar_prim)
+        xform.ClearXformOpOrder()
+        xform.AddTranslateOp().Set(Gf.Vec3d(*gs_position)) # Yıldız işareti diziyi unpack eder
+        xform.AddRotateXYZOp().Set(Gf.Vec3f(*gs_rotation))
+
+        radar_prim.CreateAttribute("minRange", Sdf.ValueTypeNames.Float).Set(0.5)
+        radar_prim.CreateAttribute("maxRange", Sdf.ValueTypeNames.Float).Set(150.0)
+
 
         drone_model_cfg = self.cfg.task.drone_model
         self.drone, self.controller = MultirotorBase.make(
             drone_model_cfg.name, drone_model_cfg.controller
         )
 
-        target_vis_prim = prim_utils.create_prim(
+        #hdr_path = "/data/borailkdoganlar/IsaacLab/OmniDrones/omni_drones/envs/assets/bambanani_sunset_8k.hdr"
+        hdr_path = "/data/borailkdoganlar/IsaacLab/OmniDrones/omni_drones/envs/assets/grasslands_sunset_8k.hdr"
+        #hdr_path = "/data/borailkdoganlar/IsaacLab/OmniDrones/omni_drones/envs/assets/modern_evening_street_8k.hdr"
+
+        """stage = omni.usd.get_context().get_stage()
+        ground_path = "/World/defaultGroundPlane"
+
+        xform = UsdGeom.Xform.Define(stage, ground_path)
+        mesh = UsdGeom.Mesh.Define(stage, ground_path + "/Mesh")
+
+        half = self.cfg.env.env_spacing / 2.0  # 30/2 = 15
+        mesh.GetPointsAttr().Set([
+            Gf.Vec3f(-half, -self.cfg.env.env_spacing, 0),
+            Gf.Vec3f( half, -self.cfg.env.env_spacing, 0),
+            Gf.Vec3f( half,  half, 0),
+            Gf.Vec3f(-half,  half, 0),
+        ])
+        mesh.GetFaceVertexCountsAttr().Set([4])
+        mesh.GetFaceVertexIndicesAttr().Set([0, 1, 2, 3])
+        mesh.GetNormalsAttr().Set([Gf.Vec3f(0, 0, 1)] * 4)
+
+        # Collider
+        UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(ground_path + "/Mesh"))
+
+        # Physics material
+        mat_path = ground_path + "/PhysicsMaterial"
+        mat = UsdPhysics.MaterialAPI.Apply(UsdGeom.Xform.Define(stage, mat_path).GetPrim())
+        mat.CreateStaticFrictionAttr(1.0)
+        mat.CreateDynamicFrictionAttr(1.0)
+        mat.CreateRestitutionAttr(0.0)"""
+
+        if not prim_utils.is_prim_path_valid("/World/SkyLight"):
+            prim_utils.create_prim(
+                prim_path="/World/SkyLight",
+                prim_type="DomeLight",
+                attributes={
+                    "inputs:intensity": 1000.0,
+                    "inputs:texture:file": hdr_path,
+                    "inputs:texture:format": "latlong",
+                    "inputs:specular": 1.0
+                }
+            )
+
+        """target_vis_prim = prim_utils.create_prim(
             prim_path="/World/envs/env_0/target",
             usd_path=self.drone.usd_path,
-            translation=(0.0, 0.0, 2.),
+            translation=(12.0, 0.0, 2.),
         )
 
         kit_utils.set_nested_collision_properties(
@@ -187,18 +290,17 @@ class Hover(IsaacEnv):
         kit_utils.set_nested_rigid_body_properties(
             target_vis_prim.GetPath(),
             disable_gravity=True
-        )
+        )"""
 
-        kit_utils.create_ground_plane(
-            "/World/defaultGroundPlane",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        )
+        
+
         drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 2.)])[0]
         if self.has_payload:
             attach_payload(drone_prim.GetPath().pathString)
-        return ["/World/defaultGroundPlane"]
+        #return ["/World/defaultGroundPlane"]
+
+        global_prim_paths = [radar_path]
+        return global_prim_paths
 
     def _set_specs(self):
         drone_state_dim = self.drone.state_spec.shape[-1]
@@ -270,10 +372,10 @@ class Hover(IsaacEnv):
             payload_mass = self.payload_mass_dist.sample(env_ids.shape+(1,)) * self.drone.masses[env_ids]
             self.payload.set_masses(payload_mass, env_indices=env_ids)
 
-        target_rpy = self.target_rpy_dist.sample((*env_ids.shape, 1))
+        """target_rpy = self.target_rpy_dist.sample((*env_ids.shape, 1))
         target_rot = euler_to_quaternion(target_rpy)
         self.target_heading[env_ids] = quat_axis(target_rot.squeeze(1), 0).unsqueeze(1)
-        self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)
+        self.target_vis.set_world_poses(orientations=target_rot, env_indices=env_ids)"""
 
         self.stats[env_ids] = 0.
 
@@ -333,7 +435,7 @@ class Hover(IsaacEnv):
             + reward_action_smoothness
         )
 
-        misbehave = (self.drone.pos[..., 2] < 0.2) | (distance > 4)
+        misbehave = (self.drone.pos[..., 2] < 0.2) | (distance > 25)
         hasnan = torch.isnan(self.drone_state).any(-1)
 
         terminated = misbehave | hasnan

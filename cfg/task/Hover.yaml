@@ -6,8 +6,10 @@ defaults:
   - /base/sim_base@_here_
 
 env:
-  num_envs: 128
-  env_spacing: 6
+  num_envs: 1
+  #num_envs: 128
+  #env_spacing: 6
+  env_spacing: 30
 
 drone_model:
   name: Firefly
@@ -18,6 +20,7 @@ time_encoding: true
 reward_effort_weight: 0.1
 reward_action_smoothness_weight: 0.0
 reward_motion_smoothness_weight: 0.0
-reward_distance_scale: 1.2
+#reward_distance_scale: 1.2
+reward_distance_scale: 1.5
 
 action_transform: null

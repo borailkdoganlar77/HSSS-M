@@ -85,6 +85,12 @@ def main(cfg):
         )
     except KeyError:
         raise NotImplementedError(f"Unknown algorithm: {cfg.algo.name}")
+    
+    # Checkpoint yükleme - fine-tune için
+    if cfg.get("ckpt_path", None):
+        checkpoint = torch.load(cfg.ckpt_path, map_location=base_env.device)
+        policy.load_state_dict(checkpoint)
+        logging.info(f"Checkpoint yüklendi: {cfg.ckpt_path}")
 
     frames_per_batch = env.num_envs * int(cfg.algo.train_every)
     total_frames = cfg.get("total_frames", -1) // frames_per_batch * frames_per_batch
